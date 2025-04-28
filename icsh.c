@@ -9,22 +9,39 @@
 
 #define MAX_CMD_BUFFER 255
 
-int main() {
+//As of milestone 2 main now accepts arguments
+int main(int argc, char *argv[]) {
     char buffer[MAX_CMD_BUFFER];
     char latest_command[MAX_CMD_BUFFER] = "";  //This line will help store the latest command from the user
+    FILE *input = stdin;
 
     printf("Welcome to IC Shell!\n");
 
-    while (1) {
-        printf("icsh $ ");
-        //fgets(buffer, 255, stdin);   If we weren't including the Crtl + D feature I would uncommnet this line
-        fflush(stdout);  //fflush makes sure the message "icsh $ " gets printed immediately to avoid the potential confusion that the shell is frozen
+    if (argc == 2){
+        input = fopen(argv[1], "r");
+        if (!input){
+            perror("Could not open given file");
+            exit(1);
+        }
+    }
 
+    while (1) {
+        if (input == stdin){ //This if statement is for script mode. If we were in script mode, there would be no need to print "icsh $"
+            printf("icsh $ ");
+            //fgets(buffer, 255, stdin);   If we weren't including the Crtl + D feature I would uncommnet this line
+            fflush(stdout);  //fflush makes sure the message "icsh $ " gets printed immediately to avoid the potential confusion that the shell is frozen
+        }
         
         //This isnt necessary for milestone 1, but allows user to quit the shell with Crtl + D
-        if (fgets(buffer, MAX_CMD_BUFFER, stdin) == NULL) { 
-            printf("\n");
-            break;
+        if (fgets(buffer, MAX_CMD_BUFFER, input) == NULL) { 
+            if (input != stdin){
+                break;
+            }
+            else {
+                printf("\n");
+                break;
+            }
+            
         }
     
         
@@ -34,7 +51,7 @@ int main() {
         buffer[strcspn(buffer, "\n")] = '\0'; 
 
         //Handling empty input from user by just prompting again
-        if (strlen(buffer) == 0){
+        if (strlen(buffer) == 0 || buffer[0] == '#'){ //if the first character is '#' then that means it's a comment and we will just skip
             continue;
         }
 
@@ -55,7 +72,9 @@ int main() {
         }
 
         char *command = strtok(buffer, " ");  //split the input based on the space, effectively storing the command input into *command
-
+        if (command == NULL){
+            continue; //for handling when there is no command, we will simply skip the line
+        }
 
         //Adding in echo command
         if (strcmp(command, "echo") == 0){
@@ -82,8 +101,11 @@ int main() {
         //Handling invalid commands
         else {
             printf("bad command\n");
-        }        
+        }
+        
     }
-
+    if (input != stdin){ //closing file 
+        fclose(input);
+    }
     return 0;
 }
