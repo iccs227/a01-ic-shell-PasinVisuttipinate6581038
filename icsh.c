@@ -9,8 +9,34 @@
 #include "unistd.h"
 #include "sys/types.h"
 #include "sys/wait.h"
+#include "signal.h"
 
 #define MAX_CMD_BUFFER 255
+
+volatile sig_atomic_t pid_foreground = 0; 
+//volatile to avoid unexpected changes from a handler
+//sig_atomic_t is a type of integer that can be safely read/written in a signal handler
+//called pid_foreground because it is meant to track the ID of the child process currently running in the foreground.
+
+int latest_exit_status = 0; //tracks latest command's exit status to support echo $? (part of Milestone 4)
+
+
+
+void signint_handler(int signal){ //int signal is not used, but signal() expects handlers to be defined this way.
+    if (pid_foreground > 0){ //pid_foreground > 0 means that there IS a foreground process running. This if statement is to make sure the signal only affects the foreground process.
+        kill(pid_foreground, SIGINT); //kill actually sends a signal and not *kill* something. In this case, sigint will be handled by sending SIGINT to the child process (the foreground process).
+    }
+}
+
+void sigtstp_handler(int signal){
+    if (pid_foreground > 0){
+        kill(pid_foreground, SIGTSTP); //similar to above but sends SIGTSTP instead
+    }
+}
+
+
+
+
 
 //As of milestone 2 main now accepts arguments
 int main(int argc, char *argv[]) {
@@ -18,7 +44,6 @@ int main(int argc, char *argv[]) {
     char latest_command[MAX_CMD_BUFFER] = "";  //This line will help store the latest command from the user
     FILE *input = stdin;
 
-    printf("Welcome to IC Shell!\n");
 
     if (argc == 2){
         input = fopen(argv[1], "r");
@@ -26,6 +51,14 @@ int main(int argc, char *argv[]) {
             perror("Could not open given file");
             exit(1);
         }
+    }
+
+    //If user sends in SIGINT or SIGTSTP, they are caught here and handled by handlers above
+    signal(SIGINT, signint_handler);
+    signal(SIGTSTP, sigtstp_handler);
+
+    if (input == stdin){ //updated to only print welcome message in interactive mode and not for script mode
+        printf("Welcome to IC Shell!\n"); 
     }
 
     while (1) {
@@ -54,7 +87,7 @@ int main(int argc, char *argv[]) {
         buffer[strcspn(buffer, "\n")] = '\0'; 
 
         //Handling empty input from user by just prompting again
-        if (strlen(buffer) == 0 || buffer[0] == '#'){ //if the first character is '#' then that means it's a comment and we will just skip
+        if (strlen(buffer) == 0 || buffer[0] == '#' || (buffer[0] == '/' && buffer[1] == '/')){ //if the first character is '#' or first two being "//" then that means it's a comment and we will just skip
             continue;
         }
 
@@ -74,6 +107,11 @@ int main(int argc, char *argv[]) {
             strcpy(latest_command, buffer);  //Whenever the input isn't "!!" we save that as the latest command
         }
 
+        if (strcmp(buffer, "echo $?") == 0){  //special case of echo $? command for Milestone 4
+            printf("%d\n", latest_exit_status);
+            continue;
+        }
+
         char *command = strtok(buffer, " ");  //split the input based on the space, effectively storing the command input into *command
         if (command == NULL){
             continue; //for handling when there is no command, we will simply skip the line
@@ -85,6 +123,7 @@ int main(int argc, char *argv[]) {
             if (args){
                 printf("%s\n", args);
             }
+            latest_exit_status = 0; //for Milestone 4: all built-in commands expected to exit with exit code 0 in normal circumstances
         }
         //Adding in exit command
         else if (strcmp(command, "exit") == 0){
@@ -98,6 +137,7 @@ int main(int argc, char *argv[]) {
             }
 
             printf("Goodbye!\n");
+            latest_exit_status = exit_code;
             exit(exit_code);
 
         }
@@ -126,9 +166,23 @@ int main(int argc, char *argv[]) {
                 exit(1);
             }
             else{
+                pid_foreground = pid; //the PID here is the process ID of the child process so we update the pid_foreground here
                 int status;
-                waitpid(pid, &status, 0); //waitpid will write the child's exit status into the status variable. 0 indicates that we just want the parent to wait until the child process is finish.
-                
+                waitpid(pid, &status, WUNTRACED); //waitpid will write the child's exit status into the status variable. As of Milestone 4, "0" has been changed to "WUNTRACED". This is because the parent process simply waiting for the child process to finish as indicated by "0" is no longer sufficient. Instead, the child process can now possibly be stopped as well, and the WUNTRACED accomodates that.
+                pid_foreground = 0; //by this point there is no child process left. As such, we set pid_foreground = 0 so that the Milestone 4 signals will not affect beyond the foreground job.
+
+                if (WIFEXITED(status)) { //TRUE if child process exited normally
+                    latest_exit_status = WEXITSTATUS(status); //WEXITSTATUS extracts the status code from "status" so we can keep track of it. Supposed to be 0 if the child process was terminated with no error and 1 if there was an error.
+                }
+                else if (WIFSIGNALED(status)){ //TRUE if child process exited because of a signal
+                    latest_exit_status = 128 + WTERMSIG(status); //WTERMSIG extracts which signal caused the child process to exit. By convention we also add 128 to this number.
+                }
+                else if (WIFSTOPPED(status)){ //TRUE if child process stopped because of a signal
+                    latest_exit_status = 128 + WSTOPSIG(status); //WSTOPSIG extracts which signal caused the child process to *stop*. Similar convention to above
+                }
+                else{
+                    latest_exit_status = 1; //exit code of 1 indicating error
+                }
             }
         }
         
