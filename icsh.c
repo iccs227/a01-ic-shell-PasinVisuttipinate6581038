@@ -6,6 +6,9 @@
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
+#include "unistd.h"
+#include "sys/types.h"
+#include "sys/wait.h"
 
 #define MAX_CMD_BUFFER 255
 
@@ -98,9 +101,35 @@ int main(int argc, char *argv[]) {
             exit(exit_code);
 
         }
-        //Handling invalid commands
+        //Handling invalid commands used to be here. As of milestone 3, non built-in commands are now expected to be external commands.
         else {
-            printf("bad command\n");
+            char *args[MAX_CMD_BUFFER / 2 + 1];  
+            int i = 0;
+            args[i++] = command;  
+
+            char *arg;
+            while ((arg = strtok(NULL, " ")) != NULL){
+                args[i++] = arg; //each token is added into this array of arguments
+            }
+
+            args[i] = NULL;  //execvp expects a NULL at the end of arguments
+
+            pid_t pid = fork();
+            if (pid < 0){ //fork() will return -1 if an error occurs
+                perror("Forking failed");
+                continue;
+            }
+            else if (pid == 0){  //fork() will return 0 in the child process
+                //therefore, this else if block is inside the child process
+                execvp(command, args);  //if execvp *doesn't* fail then nothing after this line will run
+                perror("execvp failed"); //as such, if this line does get executed, we know for sure execvp went wrong
+                exit(1);
+            }
+            else{
+                int status;
+                waitpid(pid, &status, 0); //waitpid will write the child's exit status into the status variable. 0 indicates that we just want the parent to wait until the child process is finish.
+                
+            }
         }
         
     }
